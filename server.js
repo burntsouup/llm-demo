@@ -9,6 +9,7 @@ app.use(express.json());
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+const model = process.env.OPENAI_MODEL || 'gpt-3.5-turbo-instruct';
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -20,22 +21,24 @@ app.post('/api/get-completion', async (req, res) => {
     }
 
     const completion = await openai.completions.create({
-      model: 'gpt-3.5-turbo-instruct',
-      prompt: prompt,
+      model,
+      prompt,
       max_tokens: 20,
       temperature: 0.1,
       logprobs: 5,
     });
 
     const choice = completion.choices[0];
-
     const logprobs = choice.logprobs;
+    if (!logprobs?.tokens || !logprobs?.token_logprobs || !logprobs?.top_logprobs) {
+      throw new Error('The model response did not include token probabilities.');
+    }
 
     const tokensData = logprobs.tokens.map((token, idx) => {
       const mainLogprob = logprobs.token_logprobs[idx];
-      const topCandidates = logprobs.top_logprobs[idx]; // an object of token -> logprob
+      const topCandidates = logprobs.top_logprobs[idx] || {};
 
-      const mainProbability = Math.exp(mainLogprob);
+      const mainProbability = Number.isFinite(mainLogprob) ? Math.exp(mainLogprob) : 0;
 
       const candidateEntries = Object.entries(topCandidates).map(([tok, lp]) => {
         return { token: tok, probability: Math.exp(lp) };
@@ -51,8 +54,10 @@ app.post('/api/get-completion', async (req, res) => {
 
     res.json({ tokensData });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'An error occurred.' });
+    console.error('Completion request failed:', err.message);
+    res.status(502).json({
+      error: 'The model request failed. Check the API key, model, and server logs.'
+    });
   }
 });
 

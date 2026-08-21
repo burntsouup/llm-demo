@@ -3,16 +3,18 @@ document.addEventListener('DOMContentLoaded', () => {
   const promptInput = document.getElementById('prompt-input');
   const resultContainer = document.getElementById('result-container');
 
-  function isWordLike(str) {
-    return /[A-Za-z0-9]/.test(str);
-  }
-
   function getRandomPastelColor() {
     const hue = Math.floor(Math.random() * 360);
     return `hsla(${hue}, 100%, 85%, 0.7)`;
   }
 
-  submitButton.addEventListener('click', async () => {
+  function appendTooltipLine(container, text) {
+    const line = document.createElement('div');
+    line.textContent = text;
+    container.appendChild(line);
+  }
+
+  async function submitPrompt() {
     const prompt = promptInput.value.trim();
     if (!prompt) {
       resultContainer.textContent = 'Please enter a prompt above.';
@@ -20,6 +22,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     resultContainer.textContent = 'Loading...';
+    submitButton.disabled = true;
+    submitButton.textContent = 'Generating...';
 
     try {
       const response = await fetch('/api/get-completion', {
@@ -29,14 +33,20 @@ document.addEventListener('DOMContentLoaded', () => {
       });
 
       if (!response.ok) {
-        resultContainer.textContent = 'Error fetching completion.';
+        const errorData = await response.json().catch(() => ({}));
+        resultContainer.textContent = errorData.error || 'Error fetching completion.';
         return;
       }
 
       const data = await response.json();
-      const tokensData = data.tokensData;
+      const tokensData = data.tokensData || [];
 
       resultContainer.innerHTML = '';
+
+      if (tokensData.length === 0) {
+        resultContainer.textContent = 'The model did not return any tokens.';
+        return;
+      }
 
       tokensData.forEach(({ token, mainProbability, topCandidates }) => {
         const tokenWrapper = document.createElement('span');
@@ -59,37 +69,43 @@ document.addEventListener('DOMContentLoaded', () => {
         `;
 
         const tokenPercentage = (mainProbability * 100).toFixed(2);
+        const candidates = topCandidates
+          .sort((a, b) => b.probability - a.probability)
+          .slice(0, 5);
 
-        const filteredCandidates = topCandidates
-          .filter(({ token: cToken }) => isWordLike(cToken))
-          .sort((a, b) => b.probability - a.probability);
+        const chosenSection = document.createElement('div');
+        chosenSection.className = 'mb-2';
+        appendTooltipLine(chosenSection, `Chosen token: ${JSON.stringify(token)}`);
+        appendTooltipLine(chosenSection, `Probability: ${tokenPercentage}%`);
 
-        const topCount = Math.min(filteredCandidates.length, 5);
+        const separator = document.createElement('hr');
+        separator.className = 'my-2';
 
-        let tooltipHTML = `
-          <div class="mb-2">
-            <strong>Chosen token:</strong> "${token}"<br />
-            Probability: ${tokenPercentage}%
-          </div>
-          <hr class="my-2" />
-          <div>
-            <strong>Top ${topCount} tokens:</strong><br />
-        `;
-        for (let i = 0; i < topCount; i++) {
-          const { token: cToken, probability } = filteredCandidates[i];
-          tooltipHTML += `"${cToken}" => ${(probability * 100).toFixed(2)}%<br />`;
-        }
-        tooltipHTML += '</div>';
+        const candidatesSection = document.createElement('div');
+        appendTooltipLine(candidatesSection, `Top ${candidates.length} tokens:`);
+        candidates.forEach(({ token: candidateToken, probability }) => {
+          appendTooltipLine(
+            candidatesSection,
+            `${JSON.stringify(candidateToken)} => ${(probability * 100).toFixed(2)}%`
+          );
+        });
 
-        tooltip.innerHTML = tooltipHTML;
+        tooltip.appendChild(chosenSection);
+        tooltip.appendChild(separator);
+        tooltip.appendChild(candidatesSection);
 
         tokenWrapper.appendChild(tokenSpan);
         tokenWrapper.appendChild(tooltip);
         resultContainer.appendChild(tokenWrapper);
       });
     } catch (err) {
-      resultContainer.textContent = 'An error occurred.';
+      resultContainer.textContent = 'Could not reach the demo server.';
       console.error(err);
+    } finally {
+      submitButton.disabled = false;
+      submitButton.textContent = 'Submit';
     }
-  });
+  }
+
+  submitButton.addEventListener('click', submitPrompt);
 });
